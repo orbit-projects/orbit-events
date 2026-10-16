@@ -1,72 +1,46 @@
-# Orbit Events: operations and security
+# Orbit Events: operations
 
-This guide organizes runtime behavior documented by the package. It does not certify production readiness. Verify provider/client versions, permissions, transport security, limits, and failure behavior in the target environment before release.
+`orbit-events` does not define broker connection settings or `ORBIT_*` environment variables. The
+selected adapter owns bootstrap servers or endpoints, credentials, TLS, timeouts, producer
+configuration, consumer groups, retries, and shutdown behavior. Use that adapter's deployment
+guide as the source of truth.
 
-## Configuration surface
+## Wiring and lifecycle
 
-Environment names found in the package README:
+Construct the provider transport through its adapter plugin or register it as an application
+resource. Pass the registered `EventTransport` to `EventClient`. The client does not close the
+transport; ensure exactly one lifecycle owner closes the underlying producer, consumer, network
+client, and background tasks.
 
-The package README does not name `ORBIT_*` variables. Use its typed constructors and application configuration, and confirm exact runtime inputs in the implementation before deployment.
+Keep subscriptions tied to application startup and call `unsubscribe` during shutdown when the
+adapter requires it. Confirm whether close drains handlers, cancels them, or waits for broker
+acknowledgment. Do not assume the opaque token is portable between clients or process restarts.
 
-Use the package README's constructor and deployment examples. Store credentials in a secret manager and avoid logging credentials, raw provider errors, request data, or opaque cursors.
+## Payload and schema operations
 
-## Lifecycle, failure behavior, and limits
+Definitions default to a 1 MiB serialized JSON payload limit and may set a lower or higher limit up
+to 16 MiB. The bound is checked on encoded UTF-8 JSON. It does not bound pre-serialization model
+allocation or provider-specific envelope overhead. Keep events small and store larger artifacts
+separately.
 
-`orbit-events` adds typed, versioned application event definitions over Orbit Core's
-`EventTransport`. It is a capability layer, not a second event bus: Core continues to own the
-in-process `EventBus`, event envelope, event store, transport protocol, lifecycle, and plugin
-orchestration. Broker adapters such as `orbit-events-kafka`, `orbit-events-rabbitmq`, and `orbit-events-nats` remain
-separately installable and can be used through the same client.
+Consumers require exact schema versions. Roll out version changes according to the broker's
+consumer-group and routing semantics. Before increasing producer versions, make sure consumers that
+need the new events are deployed. Monitor schema validation failures as application errors and
+define the adapter's retry, reject, or dead-letter response deliberately; automatic retries can
+repeat side effects if handlers are not idempotent.
 
-```bash
-python -m pip install orbit-core orbit-events orbit-events-kafka
-```
+## Delivery behavior
 
-```python
-from pydantic import BaseModel
-from orbit_events import EventClient, EventDefinition, TypedEvent
+The package does not promise delivery durability, order, exactly-once processing, or a specific
+retry count. Test the adapter's acknowledgment timing, duplicate delivery, poison-message handling,
+partition/concurrency model, backpressure, and recovery after broker interruption. Make handlers
+idempotent where redelivery is possible, and use a transactional outbox or equivalent application
+pattern when database changes and event publication must remain consistent.
 
+## Monitoring and rollout checks
 
-class OrderPlaced(BaseModel):
-    order_id: str
-    total_cents: int
-
-
-ORDER_PLACED = EventDefinition("orders.placed", OrderPlaced, schema_version=1)
-# `transport` is the EventTransport instance registered/owned by the chosen adapter.
-events = EventClient(transport)
-
-await events.publish(ORDER_PLACED, OrderPlaced(order_id="o-42", total_cents=1299))
-
-
-async def on_order_placed(event: TypedEvent[OrderPlaced]) -> None:
-    print(event.payload.order_id)
-
-
-subscription = await events.subscribe(ORDER_PLACED, on_order_placed)
-```
-
-Event names follow Core's lowercase bounded identifier format. Publication validates a Pydantic
-payload and serializes it into the Core envelope with the schema version in
-`orbit.events.schema_version`. Consumption requires an exact schema-version match and validates
-the payload before calling application code. A schema mismatch raises `EventSchemaError` through
-the transport handler; broker retry/dead-letter behavior is defined by the selected adapter. This
-package does not provide schema evolution, a schema registry, exactly-once delivery, or a broker.
-
-Each definition bounds the serialized JSON payload to 1 MiB by default, configurable up to a hard
-16 MiB limit. Payloads must serialize as a JSON object, including after custom Pydantic serializers
-run. This keeps provider wire data bounded and prevents root/list payloads from being mislabeled as
-object payloads in the Core event envelope. Use object storage and pass a reference when event data
-would exceed the bound.
-
-Validation and custom serialization failures become `EventSchemaError` messages without payload
-values. Publication gives the transport a detached deep copy, so mutation of the returned envelope
-cannot alter transport-owned event data.
-
-`EventClient` does not own or close its transport. The adapter's Core plugin manages transport
-registration and shutdown. Configure durable delivery, retries, and handler idempotency according
-to the chosen broker's documentation.
-
-## Production validation
-
-Validate startup/shutdown cleanup, timeout and cancellation behavior, concurrency and payload bounds where applicable, secret rotation and least-privilege access, data durability, backup/restore, and failover against the selected provider. Do not infer distributed or durable guarantees from an in-process API or fake-client tests.
+Track broker lag and connection health through the adapter's observability integration, plus
+application-level validation failures, handler latency, and retry volume. Verify credential
+rotation, graceful termination with active handlers, schema-version rollout, and recovery from
+unavailable brokers in a representative non-production environment. Unit tests with a fake
+transport do not validate broker behavior or deployment topology.

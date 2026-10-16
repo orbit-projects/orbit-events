@@ -14,6 +14,7 @@
 """Typed event schemas and a client facade over Orbit Core event transports."""
 
 from orbit_events.client import EventClient, TypedEventHandler
+from orbit_events.cloudevents import decode_cloudevent, decode_event, encode_cloudevent
 from orbit_events.contracts import (
     EventCatalog,
     EventDefinition,
@@ -29,5 +30,8 @@ __all__ = [
     "EventSchemaError",
     "TypedEvent",
     "TypedEventHandler",
+    "decode_cloudevent",
+    "decode_event",
+    "encode_cloudevent",
     "validate_payload",
 ]

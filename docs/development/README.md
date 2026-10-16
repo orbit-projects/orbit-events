@@ -1,10 +1,12 @@
 # Orbit Events: development
 
-This package declares support for `>=3.11,<3.15` in `pyproject.toml`. That declaration is distinct from evidence that hosted CI ran.
+This package owns typed event definitions on top of Orbit Core's transport contract. Broker
+protocols and SDKs belong in separately installable adapters. Changes to the event envelope or
+delivery contract need coordinated review in Core and every broker adapter.
 
-Use the checks for each language manifest present in this repository:
+## Local setup and checks
 
-### Python package
+From the repository root:
 
 ```bash
 python -m pip install -e '.[dev]' build
@@ -12,10 +14,24 @@ pytest
 ruff check src tests
 ruff format --check src tests
 mypy
+python -m build
 ```
 
-Optional SDKs and live-service tests are described by the package README. Do not run an opt-in live test against a shared or production service unless its own documentation explicitly supports that use.
+The unit tests use a fake Core transport and no broker credentials. They cover payload validation,
+JSON size bounds, schema-version checks, transport delegation, and error-message safety. They do
+not validate broker retries, acknowledgments, delivery guarantees, schema rollout, or hosted CI.
 
-## Contribution expectations
+## Changing an event contract
 
-Add focused regression coverage for behavior changes. Update the README and relevant guide when a contract, configuration option, security property, lifecycle rule, or operational assumption changes. Report the exact versions and services exercised; local checks do not imply hosted CI or release validation.
+- Treat event names and schema versions as public integration APIs. Do not silently change the
+  meaning of an existing version.
+- Keep serialization deterministic enough for the documented size bound, and retain the root JSON
+  object requirement unless Core's event envelope contract changes.
+- Avoid exceptions that include rejected model values, payloads, or custom serializer details.
+- Add regression tests for invalid payloads, custom serializers/validators, version mismatches,
+  payload limits, cancellation, and transport ownership as relevant.
+- Update examples and all package guides, and coordinate consumer rollout guidance with the
+  selected broker adapters.
+
+Follow the contribution guide, governance, code of conduct, and security policy. Keep test payloads
+synthetic and report local validation separately from live broker or hosted CI evidence.

@@ -32,7 +32,13 @@ _MAX_PAYLOAD_BYTES = 16 * 1_024 * 1_024
 
 @dataclass(frozen=True, slots=True)
 class EventDefinition(Generic[PayloadT]):
-    """Declare the payload model and schema version for one stable event name."""
+    """Declare one event name, payload model, and exact schema version.
+
+    Names use the Core lowercase event-name format. A definition accepts payloads only when they
+    validate as its Pydantic model and serialize to a bounded JSON object. Consumers require the
+    exact version declared here; this package does not perform schema migration or compatibility
+    negotiation between versions.
+    """
 
     name: str
     payload_type: type[PayloadT]
@@ -59,7 +65,12 @@ class EventDefinition(Generic[PayloadT]):
 
 @dataclass(frozen=True, slots=True)
 class TypedEvent(Generic[PayloadT]):
-    """Pair a validated application payload with its original Core envelope."""
+    """Pair a validated application payload with the Core envelope that carried it.
+
+    The payload is validated for this definition before a handler is invoked. The envelope remains
+    the transport-provided value and may be mutable; handlers should treat it as read-only and
+    must not use it to alter broker acknowledgment or retry behavior.
+    """
 
     definition: EventDefinition[PayloadT]
     payload: PayloadT
@@ -67,25 +78,34 @@ class TypedEvent(Generic[PayloadT]):
 
 
 class EventSchemaError(ValueError):
-    """Raised when an event payload or schema version violates its definition."""
+    """Raised when an event name, version, payload, or JSON encoding violates its definition.
+
+    Messages intentionally omit payload values and Pydantic's potentially sensitive error details.
+    Broker adapters decide whether this handler exception is retried, rejected, or dead-lettered.
+    """
 
 
 class EventCatalog:
-    """Small explicit registry that prevents ambiguous event-name definitions."""
+    """Application-owned registry of explicit event definitions.
+
+    Registration is idempotent for an equal definition and rejects a second, different definition
+    under the same name. The catalog is local configuration; it is not a schema registry or a
+    network service and does not negotiate producer/consumer compatibility.
+    """
 
     def __init__(self) -> None:
         """Create an empty registry; definitions are application-owned values."""
         self._definitions: dict[str, EventDefinition[Any]] = {}
 
     def register(self, definition: EventDefinition[Any]) -> None:
-        """Register a definition once, rejecting a conflicting name."""
+        """Register a definition, allowing exact repeats but rejecting conflicting names."""
         existing = self._definitions.get(definition.name)
         if existing is not None and existing != definition:
             raise ValueError(f"Event name {definition.name!r} already has a different definition.")
         self._definitions[definition.name] = definition
 
     def resolve(self, name: str) -> EventDefinition[Any]:
-        """Return a registered definition or raise ``KeyError`` for unknown names."""
+        """Return the local definition for ``name`` or raise ``KeyError`` if it is unknown."""
         return self._definitions[name]
 
     def __len__(self) -> int:

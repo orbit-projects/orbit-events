@@ -40,6 +40,9 @@ class EventClient:
 
     The client does not own or close the transport. Broker adapters and the Core lifecycle retain
     their existing resource ownership, while applications may use this facade with any adapter.
+    Payload validation and encoding errors are raised as ``EventSchemaError``. Transport failures
+    and handler failures propagate according to the underlying transport and broker adapter; this
+    facade does not promise persistence, retry, ordering, acknowledgment, or exactly-once delivery.
     """
 
     def __init__(self, transport: EventTransport) -> None:
@@ -56,7 +59,14 @@ class EventClient:
         causation_id: UUID | None = None,
         delivery_key: str | None = None,
     ) -> Event[dict[str, Any]]:
-        """Validate, encode, and publish one versioned event; return its Core envelope."""
+        """Validate, encode, and publish one versioned event; return its Core envelope.
+
+        The event name and schema version come from ``definition``. The encoded payload is bounded
+        JSON object data, and the transport receives a deep copy so later caller mutation of the
+        returned envelope cannot mutate the object submitted to the transport. This method returns
+        when ``EventTransport.publish`` returns; durable broker acceptance depends on that
+        transport's contract.
+        """
         validated, wire_payload = _validate_and_encode(definition, payload)
         envelope = Event[dict[str, Any]](
             name=definition.name,
@@ -76,7 +86,15 @@ class EventClient:
         definition: EventDefinition[PayloadT],
         handler: TypedEventHandler[PayloadT],
     ) -> object:
-        """Register a typed handler, validating event name, version, and payload on delivery."""
+        """Register a typed handler and return the transport's opaque subscription token.
+
+        Every delivery is checked for the expected event name and exact schema version, then its
+        payload is validated before the application handler runs. Validation failures raise a
+        sanitized ``EventSchemaError`` through the transport callback; adapter retry, rejection,
+        and dead-letter policy remain broker-specific. Handler exceptions and cancellation
+        propagate unchanged. The token belongs to the transport and should be passed back to this
+        client's ``unsubscribe`` method.
+        """
 
         async def dispatch(envelope: Event[Any]) -> None:
             if envelope.name != definition.name:
@@ -92,7 +110,11 @@ class EventClient:
         return await self._transport.subscribe(definition.name, dispatch)
 
     async def unsubscribe(self, token: object) -> None:
-        """Delegate subscription removal to the transport that issued ``token``."""
+        """Remove a subscription using the opaque token issued by this client's transport.
+
+        Unsubscription is delegated directly; ordering with in-flight deliveries and behavior for
+        stale tokens are defined by the selected transport.
+        """
         await self._transport.unsubscribe(token)
 
 

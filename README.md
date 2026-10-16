@@ -41,6 +41,14 @@ the payload before calling application code. A schema mismatch raises `EventSche
 the transport handler; broker retry/dead-letter behavior is defined by the selected adapter. This
 package does not provide schema evolution, a schema registry, exactly-once delivery, or a broker.
 
+The shared `encode_cloudevent` and `decode_cloudevent` helpers implement CloudEvents 1.0 structured
+JSON with bounded UTF-8 payloads. The Kafka, NATS JetStream, and RabbitMQ adapters publish this
+format and accept both CloudEvents and the previous Orbit JSON envelope while consumers migrate.
+Orbit envelope metadata uses the string-valued `orbitmetadata` extension; application payload stays
+in CloudEvents `data`. Non-UUID foreign CloudEvents IDs map deterministically to Orbit UUIDs, with
+their original source and ID retained in reserved envelope metadata. Binary mode, `data_base64`,
+and schema negotiation are not implemented.
+
 Each definition bounds the serialized JSON payload to 1 MiB by default, configurable up to a hard
 16 MiB limit. Payloads must serialize as a JSON object, including after custom Pydantic serializers
 run. This keeps provider wire data bounded and prevents root/list payloads from being mislabeled as
@@ -68,6 +76,6 @@ ruff check .
 mypy
 ```
 
-This package is pre-alpha, its API is not stable, and it supports Python 3.11 through 3.14.
+This package is alpha, its API is not stable, and it supports Python 3.11 through 3.14.
 Licensed under Apache-2.0.
 
